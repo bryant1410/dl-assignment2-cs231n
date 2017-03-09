@@ -175,7 +175,10 @@ class FullyConnectedNet(object):
     # beta2, etc. Scale parameters should be initialized to one and shift      #
     # parameters should be initialized to zero.                                #
     ############################################################################
-    pass
+    dims = [input_dim] + hidden_dims + [num_classes]
+    for i in range(len(dims) - 1):
+      self.params['W%d' % (i + 1)] = np.random.normal(scale=weight_scale, size=(dims[i], dims[i + 1]))
+      self.params['b%d' % (i + 1)] = np.zeros(dims[i + 1])
     ############################################################################
     #                             END OF YOUR CODE                             #
     ############################################################################
@@ -233,7 +236,19 @@ class FullyConnectedNet(object):
     # self.bn_params[1] to the forward pass for the second batch normalization #
     # layer, etc.                                                              #
     ############################################################################
-    pass
+    input_ = X
+    caches_affine = []
+    caches_relu = []
+    for i in xrange(self.num_layers - 1):
+      out_affine, cache_affine = affine_forward(input_, self.params['W%d' % (i + 1)], self.params['b%d' % (i + 1)])
+      caches_affine.append(cache_affine)
+
+      input_, cache_relu = relu_forward(out_affine)
+      caches_relu.append(cache_relu)
+
+    scores, cache_affine = affine_forward(input_, self.params['W%d' % self.num_layers],
+                                              self.params['b%d' % self.num_layers])
+    caches_affine.append(cache_affine)
     ############################################################################
     #                             END OF YOUR CODE                             #
     ############################################################################
@@ -256,7 +271,20 @@ class FullyConnectedNet(object):
     # automated tests, make sure that your L2 regularization includes a factor #
     # of 0.5 to simplify the expression for the gradient.                      #
     ############################################################################
-    pass
+    loss, d_scores = softmax_loss(scores, y)
+    d_last_out, grads['W%d' % self.num_layers], grads['b%d' % self.num_layers] = affine_backward(d_scores,
+                                                                                                 caches_affine.pop())
+
+    for i in xrange(self.num_layers - 1, 0, -1):
+      d_last_out = relu_backward(d_last_out, caches_relu.pop())
+      d_last_out, grads['W%d' % i], grads['b%d' % i] = affine_backward(d_last_out, caches_affine.pop())
+
+    # noinspection PyTypeChecker
+    loss += 0.5 * self.reg * sum(np.sum(self.params[param] ** 2) for param in self.params.keys()
+                                 if param.startswith('W'))
+    for param in self.params.keys():
+      if param.startswith('W'):
+        grads[param] += self.reg * self.params[param]
     ############################################################################
     #                             END OF YOUR CODE                             #
     ############################################################################
