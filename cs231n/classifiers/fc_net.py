@@ -176,9 +176,13 @@ class FullyConnectedNet(object):
     # parameters should be initialized to zero.                                #
     ############################################################################
     dims = [input_dim] + hidden_dims + [num_classes]
-    for i in range(len(dims) - 1):
+    for i in xrange(len(dims) - 1):
       self.params['W%d' % (i + 1)] = np.random.normal(scale=weight_scale, size=(dims[i], dims[i + 1]))
       self.params['b%d' % (i + 1)] = np.zeros(dims[i + 1])
+
+      if self.use_batchnorm and i < len(dims) - 2:
+        self.params['gamma%d' % (i + 1)] = np.ones(dims[i + 1])
+        self.params['beta%d' % (i + 1)] = np.zeros(dims[i + 1])
     ############################################################################
     #                             END OF YOUR CODE                             #
     ############################################################################
@@ -237,18 +241,20 @@ class FullyConnectedNet(object):
     # layer, etc.                                                              #
     ############################################################################
     input_ = X
-    caches_affine = []
-    caches_relu = []
+    caches = []
     for i in xrange(self.num_layers - 1):
-      out_affine, cache_affine = affine_forward(input_, self.params['W%d' % (i + 1)], self.params['b%d' % (i + 1)])
-      caches_affine.append(cache_affine)
+      n = i + 1
+      input_, cache = FullyConnectedNet._layer_forward(input_, self.params['W%d' % n], self.params['b%d' % n],
+                                                       self.params['gamma%d' % n] if 'gamma%d' % n
+                                                                                     in self.params else None,
+                                                       self.params['beta%d' % n] if 'beta%d' % n
+                                                                                    in self.params else None,
+                                                       use_batchnorm=self.use_batchnorm,
+                                                       bn_params=self.bn_params[i] if self.bn_params else None)
+      caches.append(cache)
 
-      input_, cache_relu = relu_forward(out_affine)
-      caches_relu.append(cache_relu)
-
-    scores, cache_affine = affine_forward(input_, self.params['W%d' % self.num_layers],
-                                              self.params['b%d' % self.num_layers])
-    caches_affine.append(cache_affine)
+    scores, cache_last_affine = affine_forward(input_, self.params['W%d' % self.num_layers],
+                                               self.params['b%d' % self.num_layers])
     ############################################################################
     #                             END OF YOUR CODE                             #
     ############################################################################
@@ -273,11 +279,13 @@ class FullyConnectedNet(object):
     ############################################################################
     loss, d_scores = softmax_loss(scores, y)
     d_last_out, grads['W%d' % self.num_layers], grads['b%d' % self.num_layers] = affine_backward(d_scores,
-                                                                                                 caches_affine.pop())
+                                                                                                 cache_last_affine)
 
     for i in xrange(self.num_layers - 1, 0, -1):
-      d_last_out = relu_backward(d_last_out, caches_relu.pop())
-      d_last_out, grads['W%d' % i], grads['b%d' % i] = affine_backward(d_last_out, caches_affine.pop())
+      d_last_out, grads['W%d' % i], grads['b%d' % i], d_gamma, d_beta = FullyConnectedNet._layer_backward(
+        d_last_out, caches.pop(), use_batchnorm=self.use_batchnorm)
+      if self.use_batchnorm:
+        grads['gamma%d' % i], grads['beta%d' % i] = d_gamma, d_beta
 
     # noinspection PyTypeChecker
     loss += 0.5 * self.reg * sum(np.sum(self.params[param] ** 2) for param in self.params.keys()
@@ -290,3 +298,24 @@ class FullyConnectedNet(object):
     ############################################################################
 
     return loss, grads
+
+  @staticmethod
+  def _layer_forward(x, W, b, gamma=None, beta=None, use_batchnorm=True, bn_params=None):
+    out, cache_affine = affine_forward(x, W, b)
+    if use_batchnorm:
+      out, cache_bn = batchnorm_forward(out, gamma, beta, bn_params)
+    else:
+      cache_bn = None
+    out, cache_relu = relu_forward(out)
+    return out, (cache_affine, cache_bn, cache_relu)
+
+  @staticmethod
+  def _layer_backward(dout, cache, use_batchnorm=True):
+    cache_affine, cache_bn, cache_relu = cache
+    dx = relu_backward(dout, cache_relu)
+    if use_batchnorm:
+      dx, d_gamma, d_beta = batchnorm_backward(dx, cache_bn)
+    else:
+      d_gamma = d_beta = None
+    dx, dW, db = affine_backward(dx, cache_affine)
+    return dx, dW, db, d_gamma, d_beta
