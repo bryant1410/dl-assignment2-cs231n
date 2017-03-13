@@ -250,7 +250,8 @@ class FullyConnectedNet(object):
                                                        self.params['beta%d' % n] if 'beta%d' % n
                                                                                     in self.params else None,
                                                        use_batchnorm=self.use_batchnorm,
-                                                       bn_params=self.bn_params[i] if self.bn_params else None)
+                                                       bn_params=self.bn_params[i] if self.bn_params else None,
+                                                       use_dropout=self.use_dropout, dropout_param=self.dropout_param)
       caches.append(cache)
 
     scores, cache_last_affine = affine_forward(input_, self.params['W%d' % self.num_layers],
@@ -283,7 +284,7 @@ class FullyConnectedNet(object):
 
     for i in xrange(self.num_layers - 1, 0, -1):
       d_last_out, grads['W%d' % i], grads['b%d' % i], d_gamma, d_beta = FullyConnectedNet._layer_backward(
-        d_last_out, caches.pop(), use_batchnorm=self.use_batchnorm)
+        d_last_out, caches.pop(), use_batchnorm=self.use_batchnorm, use_dropout=self.use_dropout)
       if self.use_batchnorm:
         grads['gamma%d' % i], grads['beta%d' % i] = d_gamma, d_beta
 
@@ -300,19 +301,27 @@ class FullyConnectedNet(object):
     return loss, grads
 
   @staticmethod
-  def _layer_forward(x, W, b, gamma=None, beta=None, use_batchnorm=True, bn_params=None):
+  def _layer_forward(x, W, b, gamma=None, beta=None, use_batchnorm=False, bn_params=None, use_dropout=False,
+                     dropout_param=None):
     out, cache_affine = affine_forward(x, W, b)
     if use_batchnorm:
       out, cache_bn = batchnorm_forward(out, gamma, beta, bn_params)
     else:
       cache_bn = None
     out, cache_relu = relu_forward(out)
-    return out, (cache_affine, cache_bn, cache_relu)
+    if use_dropout:
+      out, cache_dropout = dropout_forward(out, dropout_param)
+    else:
+      cache_dropout = None
+    return out, (cache_affine, cache_bn, cache_relu, cache_dropout)
 
   @staticmethod
-  def _layer_backward(dout, cache, use_batchnorm=True):
-    cache_affine, cache_bn, cache_relu = cache
-    dx = relu_backward(dout, cache_relu)
+  def _layer_backward(dout, cache, use_batchnorm=False, use_dropout=False):
+    dx = dout
+    cache_affine, cache_bn, cache_relu, cache_dropout = cache
+    if use_dropout:
+      dx = dropout_backward(dx, cache_dropout)
+    dx = relu_backward(dx, cache_relu)
     if use_batchnorm:
       dx, d_gamma, d_beta = batchnorm_backward(dx, cache_bn)
     else:
