@@ -5,6 +5,69 @@ from cs231n.fast_layers import *
 from cs231n.layer_utils import *
 
 
+def affine_batch_relu_forward(x, w, b, gamma, beta, bn_param):
+  """
+  Convenience layer that perorms an affine transform followed by a ReLU
+
+  Inputs:
+  - x: Input to the affine layer
+  - w, b: Weights for the affine layer
+
+  Returns a tuple of:
+  - out: Output from the ReLU
+  - cache: Object to give to the backward pass
+  """
+  a, fc_cache = affine_forward(x, w, b)
+  b, batch_cache = batchnorm_forward(a, gamma, beta, bn_param)
+  out, relu_cache = relu_forward(b)
+  cache = (fc_cache, batch_cache, relu_cache)
+  return out, cache
+
+
+def affine_batch_relu_backward(dout, cache):
+  """
+  Backward pass for the affine-relu convenience layer
+  """
+  fc_cache, batch_cache, relu_cache = cache
+  da = relu_backward(dout, relu_cache)
+  d_batch, d_gamma, d_beta = batchnorm_backward(da, batch_cache)
+  dx, dw, db = affine_backward(d_batch, fc_cache)
+  return dx, dw, db, d_gamma, d_beta
+
+
+def conv_batch_relu_pool_forward(x, w, b, gamma, beta, conv_param, bn_param, pool_param):
+  """
+  Convenience layer that performs a convolution, a ReLU, and a pool.
+
+  Inputs:
+  - x: Input to the convolutional layer
+  - w, b, conv_param: Weights and parameters for the convolutional layer
+  - pool_param: Parameters for the pooling layer
+
+  Returns a tuple of:
+  - out: Output from the pooling layer
+  - cache: Object to give to the backward pass
+  """
+  a, conv_cache = conv_forward_fast(x, w, b, conv_param)
+  b, batch_cache = spatial_batchnorm_forward(a, gamma, beta, bn_param)
+  s, relu_cache = relu_forward(b)
+  out, pool_cache = max_pool_forward_fast(s, pool_param)
+  cache = (conv_cache, batch_cache, relu_cache, pool_cache)
+  return out, cache
+
+
+def conv_batch_relu_pool_backward(dout, cache):
+  """
+  Backward pass for the conv-relu-pool convenience layer
+  """
+  conv_cache, batch_cache, relu_cache, pool_cache = cache
+  ds = max_pool_backward_fast(dout, pool_cache)
+  da = relu_backward(ds, relu_cache)
+  db, d_gamma, d_beta = spatial_batchnorm_backward(da, batch_cache)
+  dx, dw, db = conv_backward_fast(db, conv_cache)
+  return dx, dw, db, d_gamma, d_beta
+
+
 class ThreeLayerConvNet(object):
   """
   A three-layer convolutional network with the following architecture:
@@ -65,8 +128,16 @@ class ThreeLayerConvNet(object):
     H__ = (H_ - pool_size) / pool_stride + 1
     W__ = (W_ - pool_size) / pool_stride + 1
 
+    self.bn_param1 = {'mode': 'train'}
+    self.params['gamma1'] = np.ones(num_filters)
+    self.params['beta1'] = np.zeros(num_filters)
+
     self.params['W2'] = np.random.normal(scale=weight_scale, size=(K_ * H__ * W__, hidden_dim))
     self.params['b2'] = np.zeros(hidden_dim)
+
+    self.bn_param2 = {'mode': 'train'}
+    self.params['gamma2'] = np.ones(hidden_dim)
+    self.params['beta2'] = np.zeros(hidden_dim)
 
     self.params['W3'] = np.random.normal(scale=weight_scale, size=(hidden_dim, num_classes))
     self.params['b3'] = np.zeros(num_classes)
@@ -101,8 +172,11 @@ class ThreeLayerConvNet(object):
     # computing the class scores for X and storing them in the scores          #
     # variable.                                                                #
     ############################################################################
-    out_conv_relu_pool, cache_conv_relu_pool = conv_relu_pool_forward(X, W1, b1, conv_param, pool_param)
-    out_affine_relu, cache_affine_relu = affine_relu_forward(out_conv_relu_pool, W2, b2)
+    out_conv_relu_pool, cache_conv_relu_pool = conv_batch_relu_pool_forward(X, W1, b1, self.params['gamma1'],
+                                                                            self.params['beta1'], conv_param,
+                                                                            self.bn_param1, pool_param)
+    out_affine_relu, cache_affine_relu = affine_batch_relu_forward(out_conv_relu_pool, W2, b2, self.params['gamma2'],
+                                                                   self.params['beta2'], self.bn_param2)
     scores, cache_affine = affine_forward(out_affine_relu, W3, b3)
     ############################################################################
     #                             END OF YOUR CODE                             #
@@ -121,8 +195,10 @@ class ThreeLayerConvNet(object):
     loss, d_scores = softmax_loss(scores, y)
 
     d_affine, grads['W3'], grads['b3'] = affine_backward(d_scores, cache_affine)
-    d_affine_relu, grads['W2'], grads['b2'] = affine_relu_backward(d_affine, cache_affine_relu)
-    _, grads['W1'], grads['b1'] = conv_relu_pool_backward(d_affine_relu, cache_conv_relu_pool)
+    d_affine_relu, grads['W2'], grads['b2'], grads['gamma2'], grads['beta2'] = \
+        affine_batch_relu_backward(d_affine, cache_affine_relu)
+    _, grads['W1'], grads['b1'], grads['gamma1'], grads['beta1'] = \
+        conv_batch_relu_pool_backward(d_affine_relu, cache_conv_relu_pool)
 
     # noinspection PyTypeChecker
     loss += 0.5 * self.reg * sum(np.sum(self.params[param] ** 2) for param in self.params.keys()
